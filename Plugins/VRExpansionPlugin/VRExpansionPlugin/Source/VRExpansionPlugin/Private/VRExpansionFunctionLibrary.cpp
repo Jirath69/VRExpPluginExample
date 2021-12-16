@@ -5,6 +5,7 @@
 #include "IXRTrackingSystem.h"
 #include "IHeadMountedDisplay.h"
 #include "Grippables/HandSocketComponent.h"
+#include "Misc/CollisionIgnoreSubsystem.h"
 
 #if WITH_CHAOS
 #include "Chaos/ParticleHandle.h"
@@ -21,7 +22,7 @@
 //General Log
 DEFINE_LOG_CATEGORY(VRExpansionFunctionLibraryLog);
 
-UGameViewportClient * UVRExpansionFunctionLibrary::GetGameViewportClient(UObject* WorldContextObject)
+UGameViewportClient* UVRExpansionFunctionLibrary::GetGameViewportClient(UObject* WorldContextObject)
 {
 	if (WorldContextObject)
 	{
@@ -31,161 +32,7 @@ UGameViewportClient * UVRExpansionFunctionLibrary::GetGameViewportClient(UObject
 	return nullptr;
 }
 
-void SetComponentCollisionIgnoreState(bool bIterateChildren1, bool bIterateChildren2, UPrimitiveComponent* Prim1, FName OptionalBoneName1, UPrimitiveComponent* Prim2, FName OptionalBoneName2, bool bIgnoreCollision)
-{
-	if (!Prim1 || !Prim2)
-	{
-		UE_LOG(VRExpansionFunctionLibraryLog, Error, TEXT("Set Objects Ignore Collision called with invalid object(s)!!"));
-	}
-
-	USkeletalMeshComponent* SkeleMesh = nullptr;
-	USkeletalMeshComponent* SkeleMesh2 = nullptr;
-
-	if (bIterateChildren1)
-	{
-		SkeleMesh = Cast<USkeletalMeshComponent>(Prim1);
-	}
-
-	if (bIterateChildren2)
-	{
-		SkeleMesh2 = Cast<USkeletalMeshComponent>(Prim2);
-	}
-
-	TArray<FBodyInstance*> ApplicableBodies;
-	if (SkeleMesh)
-	{
-		int32 NumBodiesFound = SkeleMesh->ForEachBodyBelow(OptionalBoneName1, true, false, [&ApplicableBodies](FBodyInstance* BI)
-			{
-				ApplicableBodies.Add(BI);
-			});
-	}
-	else
-	{
-		FBodyInstance* Inst1 = Prim1->GetBodyInstance(OptionalBoneName1);
-		if (Inst1)
-		{
-			ApplicableBodies.Add(Inst1);
-		}
-	}
-
-	TArray<FBodyInstance*> ApplicableBodies2;
-	if (SkeleMesh2)
-	{
-		int32 NumBodiesFound = SkeleMesh2->ForEachBodyBelow(OptionalBoneName2, true, false, [&ApplicableBodies2](FBodyInstance* BI)
-			{
-				ApplicableBodies2.Add(BI);
-			});
-	}
-	else
-	{
-		FBodyInstance* Inst1 = Prim2->GetBodyInstance(OptionalBoneName2);
-		if (Inst1)
-		{
-			ApplicableBodies2.Add(Inst1);
-		}
-	}
-
-	for (int i = 0; i < ApplicableBodies.Num(); ++i)
-	{
-
-		for (int j = 0; j < ApplicableBodies2.Num(); ++j)
-		{
-			if (ApplicableBodies[i] && ApplicableBodies2[j])
-			{
-				ApplicableBodies[i]->SetContactModification(bIgnoreCollision);
-				ApplicableBodies2[j]->SetContactModification(bIgnoreCollision);
-				if (FPhysScene* PhysScene = Prim1->GetWorld()->GetPhysicsScene())
-				{
-#if WITH_CHAOS
-					Chaos::FUniqueIdx ID0 = ApplicableBodies[i]->ActorHandle->GetParticle_LowLevel()->UniqueIdx();
-					Chaos::FUniqueIdx ID1 = ApplicableBodies2[j]->ActorHandle->GetParticle_LowLevel()->UniqueIdx();
-
-					Chaos::FIgnoreCollisionManager& IgnoreCollisionManager = PhysScene->GetSolver()->GetEvolution()->GetBroadPhase().GetIgnoreCollisionManager();
-
-					FPhysicsCommand::ExecuteWrite(PhysScene, [&]()
-						{
-							using namespace Chaos;
-
-							if (bIgnoreCollision)
-							{
-								if (!IgnoreCollisionManager.IgnoresCollision(ID0, ID1))
-								{
-									TPBDRigidParticleHandle<FReal, 3>* ParticleHandle0 = ApplicableBodies[i]->ActorHandle->GetHandle_LowLevel()->CastToRigidParticle();
-									TPBDRigidParticleHandle<FReal, 3>* ParticleHandle1 = ApplicableBodies2[j]->ActorHandle->GetHandle_LowLevel()->CastToRigidParticle();
-
-									if (ParticleHandle0 && ParticleHandle1)
-									{
-										ParticleHandle0->AddCollisionConstraintFlag(Chaos::ECollisionConstraintFlags::CCF_BroadPhaseIgnoreCollisions);
-										IgnoreCollisionManager.AddIgnoreCollisionsFor(ID0, ID1);
-
-										ParticleHandle1->AddCollisionConstraintFlag(Chaos::ECollisionConstraintFlags::CCF_BroadPhaseIgnoreCollisions);
-										IgnoreCollisionManager.AddIgnoreCollisionsFor(ID1, ID0);
-									}
-								}
-							}
-							else
-							{
-								if (IgnoreCollisionManager.IgnoresCollision(ID0, ID1))
-								{
-									TPBDRigidParticleHandle<FReal, 3>* ParticleHandle0 = ApplicableBodies[i]->ActorHandle->GetHandle_LowLevel()->CastToRigidParticle();
-									TPBDRigidParticleHandle<FReal, 3>* ParticleHandle1 = ApplicableBodies2[j]->ActorHandle->GetHandle_LowLevel()->CastToRigidParticle();
-
-									if (ParticleHandle0 && ParticleHandle1)
-									{
-										IgnoreCollisionManager.RemoveIgnoreCollisionsFor(ID0, ID1);
-										IgnoreCollisionManager.RemoveIgnoreCollisionsFor(ID1, ID0);
-
-										if (IgnoreCollisionManager.NumIgnoredCollision(ID0) < 1)
-										{
-											ParticleHandle0->RemoveCollisionConstraintFlag(Chaos::ECollisionConstraintFlags::CCF_BroadPhaseIgnoreCollisions);
-										}
-
-										if (IgnoreCollisionManager.NumIgnoredCollision(ID1) < 1)
-										{
-											ParticleHandle1->RemoveCollisionConstraintFlag(Chaos::ECollisionConstraintFlags::CCF_BroadPhaseIgnoreCollisions);
-										}
-									}
-								}
-							}
-						});
-
-#elif PHYSICS_INTERFACE_PHYSX
-					if (PxScene* PScene = PhysScene->GetPxScene())
-					{
-						if (FCCDContactModifyCallbackVR* ContactCallback = (FCCDContactModifyCallbackVR*)PScene->getCCDContactModifyCallback())
-						{
-							FRWScopeLock(ContactCallback->RWAccessLock, FRWScopeLockType::SLT_Write);
-							FContactModBodyInstancePair newContactPair;
-							newContactPair.Actor1 = ApplicableBodies[i]->ActorHandle;
-							newContactPair.Actor2 = ApplicableBodies2[j]->ActorHandle;
-
-							if (bIgnoreCollision)
-								ContactCallback->ContactsToIgnore.AddUnique(newContactPair);
-							else
-								ContactCallback->ContactsToIgnore.Remove(newContactPair);
-						}
-
-						if (FContactModifyCallbackVR* ContactCallback = (FContactModifyCallbackVR*)PScene->getContactModifyCallback())
-						{
-							FRWScopeLock(ContactCallback->RWAccessLock, FRWScopeLockType::SLT_Write);
-							FContactModBodyInstancePair newContactPair;
-							newContactPair.Actor1 = ApplicableBodies[i]->ActorHandle;
-							newContactPair.Actor2 = ApplicableBodies2[j]->ActorHandle;
-
-							if (bIgnoreCollision)
-								ContactCallback->ContactsToIgnore.AddUnique(newContactPair);
-							else
-								ContactCallback->ContactsToIgnore.Remove(newContactPair);
-						}
-					}
-#endif
-				}
-			}
-		}
-	}
-}
-
-void UVRExpansionFunctionLibrary::SetActorsIgnoreAllCollision( AActor * Actor1, AActor * Actor2, bool bIgnoreCollision)
+void UVRExpansionFunctionLibrary::SetActorsIgnoreAllCollision(UObject* WorldContextObject, AActor* Actor1, AActor* Actor2, bool bIgnoreCollision)
 {
 	TInlineComponentArray<UPrimitiveComponent*> PrimitiveComponents1;
 	Actor1->GetComponents<UPrimitiveComponent>(PrimitiveComponents1);
@@ -193,46 +40,56 @@ void UVRExpansionFunctionLibrary::SetActorsIgnoreAllCollision( AActor * Actor1, 
 	TInlineComponentArray<UPrimitiveComponent*> PrimitiveComponents2;
 	Actor2->GetComponents<UPrimitiveComponent>(PrimitiveComponents2);
 
-	for (int i = 0; i < PrimitiveComponents1.Num(); ++i)
+	UCollisionIgnoreSubsystem* CollisionIgnoreSubsystem = WorldContextObject->GetWorld()->GetSubsystem<UCollisionIgnoreSubsystem>();
+
+	if (CollisionIgnoreSubsystem)
 	{
-		for (int j = 0; j < PrimitiveComponents2.Num(); ++j)
+		for (int i = 0; i < PrimitiveComponents1.Num(); ++i)
 		{
-			SetComponentCollisionIgnoreState(true, true, PrimitiveComponents1[i], NAME_None, PrimitiveComponents2[j], NAME_None, bIgnoreCollision);
+			for (int j = 0; j < PrimitiveComponents2.Num(); ++j)
+			{
+				CollisionIgnoreSubsystem->SetComponentCollisionIgnoreState(true, true, PrimitiveComponents1[i], NAME_None, PrimitiveComponents2[j], NAME_None, bIgnoreCollision);
+			}
 		}
 	}
 }
 
-void UVRExpansionFunctionLibrary::SetObjectsIgnoreCollision(UPrimitiveComponent* Prim1, FName OptionalBoneName1, bool bAddChildBones1, UPrimitiveComponent* Prim2, FName OptionalBoneName2, bool bAddChildBones2, bool bIgnoreCollision)
+void UVRExpansionFunctionLibrary::SetObjectsIgnoreCollision(UObject* WorldContextObject, UPrimitiveComponent* Prim1, FName OptionalBoneName1, bool bAddChildBones1, UPrimitiveComponent* Prim2, FName OptionalBoneName2, bool bAddChildBones2, bool bIgnoreCollision)
 {
-	SetComponentCollisionIgnoreState(bAddChildBones1, bAddChildBones2, Prim1, OptionalBoneName1, Prim2, OptionalBoneName2, bIgnoreCollision);
+	UCollisionIgnoreSubsystem* CollisionIgnoreSubsystem = WorldContextObject->GetWorld()->GetSubsystem<UCollisionIgnoreSubsystem>();
+
+	if (CollisionIgnoreSubsystem)
+	{
+		CollisionIgnoreSubsystem->SetComponentCollisionIgnoreState(bAddChildBones1, bAddChildBones2, Prim1, OptionalBoneName1, Prim2, OptionalBoneName2, bIgnoreCollision);
+	}
 }
 
-void UVRExpansionFunctionLibrary::LowPassFilter_RollingAverage(FVector lastAverage, FVector newSample, FVector & newAverage, int32 numSamples)
+void UVRExpansionFunctionLibrary::LowPassFilter_RollingAverage(FVector lastAverage, FVector newSample, FVector& newAverage, int32 numSamples)
 {
 	newAverage = lastAverage;
 	newAverage -= newAverage / numSamples;
 	newAverage += newSample / numSamples;
 }
 
-void UVRExpansionFunctionLibrary::LowPassFilter_Exponential(FVector lastAverage, FVector newSample, FVector & newAverage, float sampleFactor)
+void UVRExpansionFunctionLibrary::LowPassFilter_Exponential(FVector lastAverage, FVector newSample, FVector& newAverage, float sampleFactor)
 {
 	newAverage = (newSample * sampleFactor) + ((1 - sampleFactor) * lastAverage);
 }
 
-bool UVRExpansionFunctionLibrary::GetIsActorMovable(AActor * ActorToCheck)
+bool UVRExpansionFunctionLibrary::GetIsActorMovable(AActor* ActorToCheck)
 {
 	if (!ActorToCheck)
 		return false;
 
-	if (USceneComponent * rootComp = ActorToCheck->GetRootComponent())
+	if (USceneComponent* rootComp = ActorToCheck->GetRootComponent())
 	{
-		 return rootComp->Mobility == EComponentMobility::Movable;
+		return rootComp->Mobility == EComponentMobility::Movable;
 	}
 
 	return false;
 }
 
-void UVRExpansionFunctionLibrary::GetGripSlotInRangeByTypeName(FName SlotType, AActor * Actor, FVector WorldLocation, float MaxRange, bool & bHadSlotInRange, FTransform & SlotWorldTransform, FName & SlotName, UGripMotionControllerComponent* QueryController)
+void UVRExpansionFunctionLibrary::GetGripSlotInRangeByTypeName(FName SlotType, AActor* Actor, FVector WorldLocation, float MaxRange, bool& bHadSlotInRange, FTransform& SlotWorldTransform, FName& SlotName, UGripMotionControllerComponent* QueryController)
 {
 	bHadSlotInRange = false;
 	SlotWorldTransform = FTransform::Identity;
@@ -244,7 +101,7 @@ void UVRExpansionFunctionLibrary::GetGripSlotInRangeByTypeName(FName SlotType, A
 
 	MaxRange = FMath::Square(MaxRange);
 
-	if (USceneComponent *rootComp = Actor->GetRootComponent())
+	if (USceneComponent* rootComp = Actor->GetRootComponent())
 	{
 		FVector RelativeWorldLocation = rootComp->GetComponentTransform().InverseTransformPosition(WorldLocation);
 		float ClosestSlotDistance = -0.1f;
@@ -259,7 +116,7 @@ void UVRExpansionFunctionLibrary::GetGripSlotInRangeByTypeName(FName SlotType, A
 		{
 			if (SocketNames[i].ToString().Contains(GripIdentifier, ESearchCase::IgnoreCase, ESearchDir::FromStart))
 			{
-			
+
 				float vecLen = FVector::DistSquared(RelativeWorldLocation, rootComp->GetSocketTransform(SocketNames[i], ERelativeTransformSpace::RTS_Component).GetLocation());
 
 				if (MaxRange >= vecLen && (ClosestSlotDistance < 0.0f || vecLen < ClosestSlotDistance))
@@ -274,7 +131,7 @@ void UVRExpansionFunctionLibrary::GetGripSlotInRangeByTypeName(FName SlotType, A
 		TArray<USceneComponent*> AttachChildren = rootComp->GetAttachChildren();
 
 		TArray<UHandSocketComponent*> RotationallyMatchingHandSockets;
-		for (USceneComponent * AttachChild : AttachChildren)
+		for (USceneComponent* AttachChild : AttachChildren)
 		{
 			if (AttachChild && AttachChild->IsA<UHandSocketComponent>())
 			{
@@ -321,7 +178,7 @@ void UVRExpansionFunctionLibrary::GetGripSlotInRangeByTypeName(FName SlotType, A
 			TargetHandSocket = RotationallyMatchingHandSockets[0];
 			bHadSlotInRange = true;
 			ClosestSlotDistance = ControllerRot.AngularDistance(ClosestQuat);
-			for (int i= 1; i<RotationallyMatchingHandSockets.Num(); i++)
+			for (int i = 1; i < RotationallyMatchingHandSockets.Num(); i++)
 			{
 				float CheckDistance = ControllerRot.AngularDistance(RotationallyMatchingHandSockets[i]->GetComponentTransform().GetRotation());
 				if (CheckDistance < ClosestSlotDistance)
@@ -351,7 +208,7 @@ void UVRExpansionFunctionLibrary::GetGripSlotInRangeByTypeName(FName SlotType, A
 	}
 }
 
-void UVRExpansionFunctionLibrary::GetGripSlotInRangeByTypeName_Component(FName SlotType, UPrimitiveComponent * Component, FVector WorldLocation, float MaxRange, bool & bHadSlotInRange, FTransform & SlotWorldTransform, FName & SlotName, UGripMotionControllerComponent* QueryController)
+void UVRExpansionFunctionLibrary::GetGripSlotInRangeByTypeName_Component(FName SlotType, UPrimitiveComponent* Component, FVector WorldLocation, float MaxRange, bool& bHadSlotInRange, FTransform& SlotWorldTransform, FName& SlotName, UGripMotionControllerComponent* QueryController)
 {
 	bHadSlotInRange = false;
 	SlotWorldTransform = FTransform::Identity;
@@ -563,7 +420,7 @@ bool UVRExpansionFunctionLibrary::IsInVREditorPreviewOrGame()
 		{
 			TOptional<FPlayInEditorSessionInfo> PlayInfo = EdEngine->GetPlayInEditorSessionInfo();
 			if (PlayInfo.IsSet())
-			{				
+			{
 				return PlayInfo->OriginalRequestParams.SessionPreviewTypeOverride == EPlaySessionPreviewType::VRPreview;
 			}
 			else
@@ -709,7 +566,7 @@ void UVRExpansionFunctionLibrary::NonAuthorityMinimumAreaRectangle(class UObject
 #endif
 }
 
-bool UVRExpansionFunctionLibrary::EqualEqual_FBPActorGripInformation(const FBPActorGripInformation &A, const FBPActorGripInformation &B)
+bool UVRExpansionFunctionLibrary::EqualEqual_FBPActorGripInformation(const FBPActorGripInformation& A, const FBPActorGripInformation& B)
 {
 	return A == B;
 }
@@ -727,22 +584,22 @@ void UVRExpansionFunctionLibrary::BreakTransform_NetQuantize(const FTransform_Ne
 	Scale = InTransform.GetScale3D();
 }
 
-FTransform_NetQuantize UVRExpansionFunctionLibrary::Conv_TransformToTransformNetQuantize(const FTransform &InTransform)
+FTransform_NetQuantize UVRExpansionFunctionLibrary::Conv_TransformToTransformNetQuantize(const FTransform& InTransform)
 {
 	return FTransform_NetQuantize(InTransform);
 }
 
-UGripMotionControllerComponent * UVRExpansionFunctionLibrary::Conv_GripPairToMotionController(const FBPGripPair &GripPair)
+UGripMotionControllerComponent* UVRExpansionFunctionLibrary::Conv_GripPairToMotionController(const FBPGripPair& GripPair)
 {
 	return GripPair.HoldingController;
 }
 
-uint8 UVRExpansionFunctionLibrary::Conv_GripPairToGripID(const FBPGripPair &GripPair)
+uint8 UVRExpansionFunctionLibrary::Conv_GripPairToGripID(const FBPGripPair& GripPair)
 {
 	return GripPair.GripID;
 }
 
-FVector_NetQuantize UVRExpansionFunctionLibrary::Conv_FVectorToFVectorNetQuantize(const FVector &InVector)
+FVector_NetQuantize UVRExpansionFunctionLibrary::Conv_FVectorToFVectorNetQuantize(const FVector& InVector)
 {
 	return FVector_NetQuantize(InVector);
 }
@@ -752,7 +609,7 @@ FVector_NetQuantize UVRExpansionFunctionLibrary::MakeVector_NetQuantize(FVector 
 	return FVector_NetQuantize(InVector);
 }
 
-FVector_NetQuantize10 UVRExpansionFunctionLibrary::Conv_FVectorToFVectorNetQuantize10(const FVector &InVector)
+FVector_NetQuantize10 UVRExpansionFunctionLibrary::Conv_FVectorToFVectorNetQuantize10(const FVector& InVector)
 {
 	return FVector_NetQuantize10(InVector);
 }
@@ -762,7 +619,7 @@ FVector_NetQuantize10 UVRExpansionFunctionLibrary::MakeVector_NetQuantize10(FVec
 	return FVector_NetQuantize10(InVector);
 }
 
-FVector_NetQuantize100 UVRExpansionFunctionLibrary::Conv_FVectorToFVectorNetQuantize100(const FVector &InVector)
+FVector_NetQuantize100 UVRExpansionFunctionLibrary::Conv_FVectorToFVectorNetQuantize100(const FVector& InVector)
 {
 	return FVector_NetQuantize100(InVector);
 }
@@ -772,19 +629,19 @@ FVector_NetQuantize100 UVRExpansionFunctionLibrary::MakeVector_NetQuantize100(FV
 	return FVector_NetQuantize100(InVector);
 }
 
-USceneComponent* UVRExpansionFunctionLibrary::AddSceneComponentByClass(UObject* Outer, TSubclassOf<USceneComponent> Class, const FTransform & ComponentRelativeTransform)
+USceneComponent* UVRExpansionFunctionLibrary::AddSceneComponentByClass(UObject* Outer, TSubclassOf<USceneComponent> Class, const FTransform& ComponentRelativeTransform)
 {
 	if (Class != nullptr && Outer != nullptr)
 	{
 		USceneComponent* Component = NewObject<USceneComponent>(Outer, *Class);
 		if (Component != nullptr)
 		{
-			if (USceneComponent * ParentComp = Cast<USceneComponent>(Outer))
+			if (USceneComponent* ParentComp = Cast<USceneComponent>(Outer))
 				Component->SetupAttachment(ParentComp);
 
 			Component->RegisterComponent();
 			Component->SetRelativeTransform(ComponentRelativeTransform);
-			
+
 			return Component;
 		}
 		else

@@ -6,6 +6,7 @@
 #include "Kismet/BlueprintFunctionLibrary.h"
 #include "Components/SplineComponent.h"
 #include "Components/SplineMeshComponent.h"
+#include "Components/PrimitiveComponent.h"
 
 //#include "HeadMountedDisplay.h" 
 #include "HeadMountedDisplayFunctionLibrary.h"
@@ -48,12 +49,12 @@ public:
 
 	// Sets two primitive components to ignore collision between two specific bodies
 	// If bAddChildBones is true then it will also add all child bones of the given bone (or the entire skeleton if no name is given)
-	UFUNCTION(BlueprintCallable, Category = "VRExpansionFunctions|Collision", meta = (bIgnoreSelf = "true"))
-		static void SetObjectsIgnoreCollision(UPrimitiveComponent* Prim1 = nullptr, FName OptionalBoneName1 = NAME_None, bool bAddChildBones1 = false, UPrimitiveComponent* Prim2 = nullptr, FName OptionalBoneName2 = NAME_None, bool bAddChildBones2 = false, bool bIgnoreCollision = true);
+	UFUNCTION(BlueprintCallable, Category = "VRExpansionFunctions|Collision", meta = (bIgnoreSelf = "true", WorldContext = "WorldContextObject", CallableWithoutWorldContext))
+		static void SetObjectsIgnoreCollision(UObject* WorldContextObject, UPrimitiveComponent* Prim1 = nullptr, FName OptionalBoneName1 = NAME_None, bool bAddChildBones1 = false, UPrimitiveComponent* Prim2 = nullptr, FName OptionalBoneName2 = NAME_None, bool bAddChildBones2 = false, bool bIgnoreCollision = true);
 
 	// Sets two actors to entirely ignore collision between them
-	UFUNCTION(BlueprintCallable, Category = "VRExpansionFunctions|Collision", meta = (bIgnoreSelf = "true"))
-		static void SetActorsIgnoreAllCollision(AActor* Actor1 = nullptr, AActor* Actor2 = nullptr, bool bIgnoreCollision = true);
+	UFUNCTION(BlueprintCallable, Category = "VRExpansionFunctions|Collision", meta = (bIgnoreSelf = "true", WorldContext = "WorldContextObject", CallableWithoutWorldContext))
+		static void SetActorsIgnoreAllCollision(UObject* WorldContextObject, AActor* Actor1 = nullptr, AActor* Actor2 = nullptr, bool bIgnoreCollision = true);
 
 	UFUNCTION(BlueprintPure, Category = "VRExpansionFunctions", meta = (bIgnoreSelf = "true", DisplayName = "GetHandFromMotionSourceName"))
 	static bool GetHandFromMotionSourceName(FName MotionSource, EControllerHand& Hand)
