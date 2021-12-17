@@ -12,31 +12,56 @@
 
 DECLARE_LOG_CATEGORY_EXTERN(VRE_CollisionIgnoreLog, Log, All);
 
+USTRUCT()
 struct FCollisionPrimPair
 {
+	GENERATED_BODY()
+public:
+
+	UPROPERTY()
 	TWeakObjectPtr<UPrimitiveComponent> Prim1;
+	UPROPERTY()
 	TWeakObjectPtr<UPrimitiveComponent> Prim2;
+
+	FCollisionPrimPair()
+	{
+		Prim1 = nullptr;
+		Prim2 = nullptr;
+	}
 
 	FORCEINLINE bool operator==(const FCollisionPrimPair& Other) const
 	{
-		return (
+		if (!Prim1.IsValid() || !Prim2.IsValid())
+			return false;
+
+		if (!Other.Prim1.IsValid() || !Other.Prim2.IsValid())
+			return false;
+		
+		return(
 			(Prim1 == Other.Prim1 || Prim1 == Other.Prim2) &&
-			(Prim2 == Other.Prim1 || Prim2 == Other.Prim1)
+			(Prim2 == Other.Prim1 || Prim2 == Other.Prim2)
 			);
 	}
 
-	friend uint32 GetTypeHash(FCollisionPrimPair InKey)
+	friend uint32 GetTypeHash(const FCollisionPrimPair& InKey)
 	{
 		return GetTypeHash(InKey.Prim1) ^ GetTypeHash(InKey.Prim2);
 	}
+
 };
 
+USTRUCT()
 struct FCollisionIgnorePair
 {
+	GENERATED_BODY()
+public:
+
 	///FCollisionPrimPair PrimitivePair;
 	FPhysicsActorHandle Actor1;
+	UPROPERTY()
 	FName BoneName1;
 	FPhysicsActorHandle Actor2;
+	UPROPERTY()
 	FName BoneName2;
 
 	FORCEINLINE bool operator==(const FCollisionIgnorePair& Other) const
@@ -51,6 +76,16 @@ struct FCollisionIgnorePair
 	{
 		return (BoneName1 == Other || BoneName2 == Other);
 	}
+};
+
+USTRUCT()
+struct FCollisionIgnorePairArray
+{
+	GENERATED_BODY()
+public:
+
+	UPROPERTY()
+	TArray<FCollisionIgnorePair> PairArray;
 };
 
 UCLASS()
@@ -88,9 +123,12 @@ public:
 		}
 	}
 
-	TMap<FCollisionPrimPair, TArray<FCollisionIgnorePair>> CollisionTrackedPairs;
+	UPROPERTY()
+	TMap<FCollisionPrimPair, FCollisionIgnorePairArray> CollisionTrackedPairs;
 	//TArray<FCollisionIgnorePair> CollisionTrackedPairs;
-	TMap<FCollisionPrimPair, TArray<FCollisionIgnorePair>> RemovedPairs;
+
+	UPROPERTY()
+	TMap<FCollisionPrimPair, FCollisionIgnorePairArray> RemovedPairs;
 	//TArray<FCollisionIgnorePair> RemovedPairs;
 
 	//
@@ -98,7 +136,7 @@ public:
 	{
 
 #if PHYSICS_INTERFACE_PHYSX
-		for (const TPair<FCollisionPrimPair, TArray<FCollisionIgnorePair>>& Pair : RemovedPairs)
+		for (const TPair<FCollisionPrimPair, FCollisionIgnorePairArray>& Pair : RemovedPairs)
 		{
 			bool bSkipPrim1 = false;
 			bool bSkipPrim2 = false;
@@ -111,25 +149,25 @@ public:
 
 			if (!bSkipPrim1 || !bSkipPrim2)
 			{
-				for (const FCollisionIgnorePair& BonePair : Pair.Value)
+				for (const FCollisionIgnorePair& BonePair : Pair.Value.PairArray)
 				{
 					bool bPrim1Exists = false;
 					bool bPrim2Exists = false;
 
-					for (const TPair<FCollisionPrimPair, TArray<FCollisionIgnorePair>>& KeyPair : CollisionTrackedPairs)
+					for (const TPair<FCollisionPrimPair, FCollisionIgnorePairArray>& KeyPair : CollisionTrackedPairs)
 					{
 						if (!bPrim1Exists && !bSkipPrim1)
 						{
 							if (KeyPair.Key.Prim1 == Pair.Key.Prim1)
 							{
-								bPrim1Exists = KeyPair.Value.ContainsByPredicate([BonePair](const FCollisionIgnorePair& Other)
+								bPrim1Exists = KeyPair.Value.PairArray.ContainsByPredicate([BonePair](const FCollisionIgnorePair& Other)
 									{
 										return BonePair.BoneName1 == Other.BoneName1;
 									});
 							}
 							else if (KeyPair.Key.Prim2 == Pair.Key.Prim1)
 							{
-								bPrim1Exists = KeyPair.Value.ContainsByPredicate([BonePair](const FCollisionIgnorePair& Other)
+								bPrim1Exists = KeyPair.Value.PairArray.ContainsByPredicate([BonePair](const FCollisionIgnorePair& Other)
 									{
 										return BonePair.BoneName1 == Other.BoneName2;
 									});
@@ -140,14 +178,14 @@ public:
 						{
 							if (KeyPair.Key.Prim1 == Pair.Key.Prim2)
 							{
-								bPrim2Exists = KeyPair.Value.ContainsByPredicate([BonePair](const FCollisionIgnorePair& Other)
+								bPrim2Exists = KeyPair.Value.PairArray.ContainsByPredicate([BonePair](const FCollisionIgnorePair& Other)
 									{
 										return BonePair.BoneName2 == Other.BoneName1;
 									});
 							}
 							else if (KeyPair.Key.Prim2 == Pair.Key.Prim2)
 							{
-								bPrim2Exists = KeyPair.Value.ContainsByPredicate([BonePair](const FCollisionIgnorePair& Other)
+								bPrim2Exists = KeyPair.Value.PairArray.ContainsByPredicate([BonePair](const FCollisionIgnorePair& Other)
 									{
 										return BonePair.BoneName2 == Other.BoneName2;
 									});
@@ -182,7 +220,8 @@ public:
 		{
 			if (!UpdateHandle.IsValid())
 			{
-				GetWorld()->GetTimerManager().SetTimer(UpdateHandle, this, &UCollisionIgnoreSubsystem::CheckActiveFilters, 1.0f, true, 1.0f);
+				// Setup the heartbeat on 10htz checks
+				GetWorld()->GetTimerManager().SetTimer(UpdateHandle, this, &UCollisionIgnoreSubsystem::CheckActiveFilters, 0.1f, true, 0.1f);
 			}
 		}
 		else if (UpdateHandle.IsValid())

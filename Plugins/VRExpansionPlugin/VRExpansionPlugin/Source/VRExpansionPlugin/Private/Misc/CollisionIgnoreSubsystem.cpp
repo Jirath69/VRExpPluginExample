@@ -11,7 +11,7 @@ void UCollisionIgnoreSubsystem::CheckActiveFilters()
 {
 
 	bool bDoubleCheckPairs = false;
-	for (const TPair<FCollisionPrimPair, TArray<FCollisionIgnorePair>>& KeyPair : CollisionTrackedPairs)
+	for (const TPair<FCollisionPrimPair, FCollisionIgnorePairArray>& KeyPair : CollisionTrackedPairs)
 	{
 		// First check for invalid primitives
 		if (!KeyPair.Key.Prim1.IsValid() || !KeyPair.Key.Prim2.IsValid())
@@ -26,7 +26,7 @@ void UCollisionIgnoreSubsystem::CheckActiveFilters()
 		}
 
 		//Now check for lost physics handles
-		for (const FCollisionIgnorePair& IgnorePair : KeyPair.Value)
+		for (const FCollisionIgnorePair& IgnorePair : KeyPair.Value.PairArray)
 		{
 			if (
 				(!IgnorePair.Actor1.IsValid() || !FPhysicsInterface::IsValid(IgnorePair.Actor1)) ||
@@ -99,9 +99,9 @@ void UCollisionIgnoreSubsystem::CheckActiveFilters()
 		}
 	}
 
-	for (const TPair<FCollisionPrimPair, TArray<FCollisionIgnorePair>>& KeyPair : RemovedPairs)
+	for (const TPair<FCollisionPrimPair, FCollisionIgnorePairArray>& KeyPair : RemovedPairs)
 	{
-		CollisionTrackedPairs[KeyPair.Key].Empty();
+		CollisionTrackedPairs[KeyPair.Key].PairArray.Empty();
 		CollisionTrackedPairs.Remove(KeyPair.Key);
 	}
 
@@ -174,7 +174,7 @@ void UCollisionIgnoreSubsystem::SetComponentCollisionIgnoreState(bool bIterateCh
 		UPhysicsAsset* PhysAsset = SkeleMesh2 ? SkeleMesh2->GetPhysicsAsset() : nullptr;
 		if (PhysAsset)
 		{
-			int32 NumBodiesFound = SkeleMesh2->ForEachBodyBelow(OptionalBoneName1, true, false, [PhysAsset, &ApplicableBodies2](FBodyInstance* BI)
+			int32 NumBodiesFound = SkeleMesh2->ForEachBodyBelow(OptionalBoneName2, true, false, [PhysAsset, &ApplicableBodies2](FBodyInstance* BI)
 				{
 					const FName IterBodyName = PhysAsset->SkeletalBodySetups[BI->InstanceBodyIndex]->BoneName;
 					ApplicableBodies2.Add(BodyPairStore(BI, IterBodyName));
@@ -186,7 +186,7 @@ void UCollisionIgnoreSubsystem::SetComponentCollisionIgnoreState(bool bIterateCh
 		FBodyInstance* Inst1 = Prim2->GetBodyInstance(OptionalBoneName2);
 		if (Inst1)
 		{
-			ApplicableBodies.Add(BodyPairStore(Inst1, OptionalBoneName2));
+			ApplicableBodies2.Add(BodyPairStore(Inst1, OptionalBoneName2));
 		}
 	}
 
@@ -200,9 +200,9 @@ void UCollisionIgnoreSubsystem::SetComponentCollisionIgnoreState(bool bIterateCh
 	CheckActiveFilters();
 
 	// If we don't have a map element for this pair, then add it now
-	if (!CollisionTrackedPairs.Contains(newPrimPair))
+	if (bIgnoreCollision && !CollisionTrackedPairs.Contains(newPrimPair))
 	{
-		CollisionTrackedPairs.Add(newPrimPair, TArray<FCollisionIgnorePair>());
+		CollisionTrackedPairs.Add(newPrimPair, FCollisionIgnorePairArray());
 	}
 
 	for (int i = 0; i < ApplicableBodies.Num(); ++i)
@@ -248,7 +248,7 @@ void UCollisionIgnoreSubsystem::SetComponentCollisionIgnoreState(bool bIterateCh
 										ParticleHandle1->AddCollisionConstraintFlag(Chaos::ECollisionConstraintFlags::CCF_BroadPhaseIgnoreCollisions);
 										IgnoreCollisionManager.AddIgnoreCollisionsFor(ID1, ID0);
 
-										CollisionTrackedPairs[newPrimPair].AddUnique(newIgnorePair);
+										CollisionTrackedPairs[newPrimPair].PairArray.AddUnique(newIgnorePair);
 
 										/*if (ApplicableBodies[i].BInstance->bContactModification != bIgnoreCollision)
 											ApplicableBodies[i].BInstance->SetContactModification(true);
@@ -281,8 +281,8 @@ void UCollisionIgnoreSubsystem::SetComponentCollisionIgnoreState(bool bIterateCh
 										}
 									}
 
-									CollisionTrackedPairs[newPrimPair].Remove(newIgnorePair);
-									if (CollisionTrackedPairs[newPrimPair].Num() < 1)
+									CollisionTrackedPairs[newPrimPair].PairArray.Remove(newIgnorePair);
+									if (CollisionTrackedPairs[newPrimPair].PairArray.Num() < 1)
 									{
 										CollisionTrackedPairs.Remove(newPrimPair);
 									}
@@ -290,9 +290,9 @@ void UCollisionIgnoreSubsystem::SetComponentCollisionIgnoreState(bool bIterateCh
 									// If we don't have a map element for this pair, then add it now
 									if (!RemovedPairs.Contains(newPrimPair))
 									{
-										RemovedPairs.Add(newPrimPair, TArray<FCollisionIgnorePair>());
+										RemovedPairs.Add(newPrimPair, FCollisionIgnorePairArray >());
 									}
-									RemovedPairs[newPrimPair].AddUnique(newIgnorePair);
+									RemovedPairs[newPrimPair].PairArray.AddUnique(newIgnorePair);
 								}
 							}
 						});
@@ -307,9 +307,12 @@ void UCollisionIgnoreSubsystem::SetComponentCollisionIgnoreState(bool bIterateCh
 							if (bIgnoreCollision)
 							{
 
-								ContactCallback->ContactsToIgnore.AddUnique(newContactPair);
+								if (CollisionTrackedPairs.Contains(newPrimPair))
+								{
+									CollisionTrackedPairs[newPrimPair].PairArray.AddUnique(newIgnorePair);
+								}
 
-								CollisionTrackedPairs[newPrimPair].AddUnique(newIgnorePair);
+								ContactCallback->ContactsToIgnore.AddUnique(newContactPair);
 
 								if (ApplicableBodies[i].BInstance->bContactModification != bIgnoreCollision)
 									ApplicableBodies[i].BInstance->SetContactModification(true);
@@ -321,8 +324,8 @@ void UCollisionIgnoreSubsystem::SetComponentCollisionIgnoreState(bool bIterateCh
 							{
 								ContactCallback->ContactsToIgnore.Remove(newContactPair);
 
-								CollisionTrackedPairs[newPrimPair].Remove(newIgnorePair);
-								if (CollisionTrackedPairs[newPrimPair].Num() < 1)
+								CollisionTrackedPairs[newPrimPair].PairArray.Remove(newIgnorePair);
+								if (CollisionTrackedPairs[newPrimPair].PairArray.Num() < 1)
 								{
 									CollisionTrackedPairs.Remove(newPrimPair);
 								}
@@ -330,9 +333,9 @@ void UCollisionIgnoreSubsystem::SetComponentCollisionIgnoreState(bool bIterateCh
 								// If we don't have a map element for this pair, then add it now
 								if (!RemovedPairs.Contains(newPrimPair))
 								{
-									RemovedPairs.Add(newPrimPair, TArray<FCollisionIgnorePair>());
+									RemovedPairs.Add(newPrimPair, FCollisionIgnorePairArray());
 								}
-								RemovedPairs[newPrimPair].AddUnique(newIgnorePair);
+								RemovedPairs[newPrimPair].PairArray.AddUnique(newIgnorePair);
 							}
 						}
 
@@ -344,7 +347,10 @@ void UCollisionIgnoreSubsystem::SetComponentCollisionIgnoreState(bool bIterateCh
 							{
 								ContactCallback->ContactsToIgnore.AddUnique(newContactPair);
 
-								CollisionTrackedPairs[newPrimPair].AddUnique(newIgnorePair);
+								if (CollisionTrackedPairs.Contains(newPrimPair))
+								{
+									CollisionTrackedPairs[newPrimPair].PairArray.AddUnique(newIgnorePair);
+								}
 
 								if (ApplicableBodies[i].BInstance->bContactModification != bIgnoreCollision)
 									ApplicableBodies[i].BInstance->SetContactModification(true);
@@ -356,8 +362,8 @@ void UCollisionIgnoreSubsystem::SetComponentCollisionIgnoreState(bool bIterateCh
 							{
 								ContactCallback->ContactsToIgnore.Remove(newContactPair);
 
-								CollisionTrackedPairs[newPrimPair].Remove(newIgnorePair);
-								if (CollisionTrackedPairs[newPrimPair].Num() < 1)
+								CollisionTrackedPairs[newPrimPair].PairArray.Remove(newIgnorePair);
+								if (CollisionTrackedPairs[newPrimPair].PairArray.Num() < 1)
 								{
 									CollisionTrackedPairs.Remove(newPrimPair);
 								}
@@ -365,9 +371,9 @@ void UCollisionIgnoreSubsystem::SetComponentCollisionIgnoreState(bool bIterateCh
 								// If we don't have a map element for this pair, then add it now
 								if (!RemovedPairs.Contains(newPrimPair))
 								{
-									RemovedPairs.Add(newPrimPair, TArray<FCollisionIgnorePair>());
+									RemovedPairs.Add(newPrimPair, FCollisionIgnorePairArray());
 								}
-								RemovedPairs[newPrimPair].AddUnique(newIgnorePair);
+								RemovedPairs[newPrimPair].PairArray.AddUnique(newIgnorePair);
 							}
 						}
 					}
