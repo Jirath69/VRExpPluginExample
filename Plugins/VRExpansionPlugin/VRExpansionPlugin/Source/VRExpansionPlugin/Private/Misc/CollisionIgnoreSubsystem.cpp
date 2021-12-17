@@ -248,7 +248,10 @@ void UCollisionIgnoreSubsystem::SetComponentCollisionIgnoreState(bool bIterateCh
 										ParticleHandle1->AddCollisionConstraintFlag(Chaos::ECollisionConstraintFlags::CCF_BroadPhaseIgnoreCollisions);
 										IgnoreCollisionManager.AddIgnoreCollisionsFor(ID1, ID0);
 
-										CollisionTrackedPairs[newPrimPair].PairArray.AddUnique(newIgnorePair);
+										if (CollisionTrackedPairs.Contains(newPrimPair))
+										{
+											CollisionTrackedPairs[newPrimPair].PairArray.AddUnique(newIgnorePair);
+										}
 
 										/*if (ApplicableBodies[i].BInstance->bContactModification != bIgnoreCollision)
 											ApplicableBodies[i].BInstance->SetContactModification(true);
