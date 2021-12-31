@@ -14,13 +14,17 @@ void UCollisionIgnoreSubsystem::CheckActiveFilters()
 	for (const TPair<FCollisionPrimPair, FCollisionIgnorePairArray>& KeyPair : CollisionTrackedPairs)
 	{
 		// First check for invalid primitives
-		if (!KeyPair.Key.Prim1.IsValid() || !KeyPair.Key.Prim2.IsValid())
+		if (!KeyPair.Key.Prim1.IsValid() || !KeyPair.Key.Prim2.IsValid() /*|| KeyPair.Key.Prim1->IsPendingKill() || KeyPair.Key.Prim2->IsPendingKill()*/)
 		{
 			// If we don't have a map element for this pair, then add it now
 			if (!RemovedPairs.Contains(KeyPair.Key))
 			{
 				RemovedPairs.Add(KeyPair.Key, KeyPair.Value);
 			}
+			/*else
+			{
+				RemovedPairs[KeyPair.Key].PairArray.AddUnique(KeyPair.Value);
+			}*/
 
 			continue; // skip remaining checks as we have invalid primitives anyway
 		}
@@ -43,7 +47,7 @@ void UCollisionIgnoreSubsystem::CheckActiveFilters()
 		}
 	}
 
-#if WITH_CHAOS
+/*#if WITH_CHAOS
 	if (FPhysScene* PhysScene2 = GetWorld()->GetPhysicsScene())
 	{
 		Chaos::FIgnoreCollisionManager& IgnoreCollisionManager = PhysScene2->GetSolver()->GetEvolution()->GetBroadPhase().GetIgnoreCollisionManager();
@@ -51,7 +55,7 @@ void UCollisionIgnoreSubsystem::CheckActiveFilters()
 		Chaos::FIgnoreCollisionManager::FPendingMap& ActivationMap = IgnoreCollisionManager.GetPendingDeactivationsForGameThread(ExternalTimestamp)
 		GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Red, FString::Printf(TEXT("Pending deactivation Chaos: %i"), ActivationMap.Num()));
 	}
-#endif
+#endif*/
 
 	if (RemovedPairs.Num() > 0 || bDoubleCheckPairs == true)
 	{
@@ -101,9 +105,14 @@ void UCollisionIgnoreSubsystem::CheckActiveFilters()
 
 	for (const TPair<FCollisionPrimPair, FCollisionIgnorePairArray>& KeyPair : RemovedPairs)
 	{
-		CollisionTrackedPairs[KeyPair.Key].PairArray.Empty();
-		CollisionTrackedPairs.Remove(KeyPair.Key);
+		if (CollisionTrackedPairs.Contains(KeyPair.Key))
+		{
+			CollisionTrackedPairs[KeyPair.Key].PairArray.Empty();
+			CollisionTrackedPairs.Remove(KeyPair.Key);
+		}
 	}
+
+	GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Red, FString::Printf(TEXT("NumIgnored Actors: %i"), CollisionTrackedPairs.Num()));
 
 	UpdateTimer();
 }
@@ -118,6 +127,11 @@ void UCollisionIgnoreSubsystem::SetComponentCollisionIgnoreState(bool bIterateCh
 	if (!Prim1 || !Prim2)
 	{
 		UE_LOG(VRE_CollisionIgnoreLog, Error, TEXT("Set Objects Ignore Collision called with invalid object(s)!!"));
+	}
+
+	if (Prim1->Mobility == EComponentMobility::Static || Prim2->Mobility == EComponentMobility::Static)
+	{
+		UE_LOG(VRE_CollisionIgnoreLog, Error, TEXT("Set Objects Ignore Collision called with at least one static mobility object (cannot ignore collision with it)!!"));
 	}
 
 	USkeletalMeshComponent* SkeleMesh = nullptr;
